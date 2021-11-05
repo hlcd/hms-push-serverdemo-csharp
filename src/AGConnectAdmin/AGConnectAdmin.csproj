@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <TargetFrameworks>netstandard2.0;net45</TargetFrameworks>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>../AGConnectAdmin.snk</AssemblyOriginatorKeyFile>
@@ -12,6 +12,9 @@
     <Copyright>Copyright (c) Huawei Technologies Co., Ltd. 2019-2019. All rights reserved.</Copyright>
     <Authors>Huawei</Authors>
     <Configurations>Debug;Release;Proxy</Configurations>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageReleaseNotes>v 1.0.1 - improved error handling
+v 1.0.0 - initial release</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>

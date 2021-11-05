@@ -106,28 +106,46 @@ namespace AGConnectAdmin.Messaging
                     RequestUri = new Uri(sendUrl),
                     Content = content,
                 };
-
-                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-                var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-
-                if (response.StatusCode != HttpStatusCode.OK)
+                using (request)
                 {
-                    var error = $"Response status code does not indicate success: {response.StatusCode}";
-                    throw new AGConnectException(error);
+
+                    request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+                    var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                    string json = await ReadContentSafely(response).ConfigureAwait(false);
+                    if (response.StatusCode != HttpStatusCode.OK)
+                    {
+                        var error = $"Response status code does not indicate success: {response.StatusCode}\r\n" +
+                                    $"Response body: {json}";
+                        throw new AGConnectException(error);
+                    }
+
+                    var parsed = JsonConvert.DeserializeObject<SingleMessageResponse>(json);
+                    if (parsed.Code != SUCCESS_CODE)
+                    {
+                        throw new AGConnectException(
+                            $"Send message failed: {parsed.Code}{Environment.NewLine}{parsed.Message}");
+                    }
+
+                    return parsed.RequestId;
                 }
-                var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                var parsed = JsonConvert.DeserializeObject<SingleMessageResponse>(json);
-                if (parsed.Code != SUCCESS_CODE)
-                {
-                    throw new AGConnectException($"Send message failed: {parsed.Code}{Environment.NewLine}{parsed.Message}");
-                }
-                return parsed.RequestId;
             }
             catch (HttpRequestException e)
             {
                 throw new AGConnectException("Error while calling the AGC messaging service.", e);
+            }
+        }
+
+        private async Task<string> ReadContentSafely(HttpResponseMessage msg)
+        {
+            try
+            {
+                return await msg.Content.ReadAsStringAsync().ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                return $"failed to read response: {e.Message}";
             }
         }
 
@@ -298,52 +316,58 @@ namespace AGConnectAdmin.Messaging
 
         private async Task<string> RequestAccessTokenAsync(CancellationToken cancellationToken)
         {
-            string content = string.Format("grant_type=client_credentials&client_secret={0}&client_id={1}", options.ClientSecret, options.ClientId);
+            string content =
+                $"grant_type=client_credentials&client_secret={options.ClientSecret}&client_id={options.ClientId}";
             var request = new HttpRequestMessage()
             {
                 Method = HttpMethod.Post,
                 RequestUri = new Uri(TokenUrl),
                 Content = new StringContent(content),
             };
-            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-www-form-urlencoded");
-            var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            if (response.StatusCode != HttpStatusCode.OK)
+            using (request)
             {
-                var error = $"Response status code does not indicate success: {response.StatusCode}";
-                throw new AGConnectException(error);
-            }
+                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-www-form-urlencoded");
+                var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var json = await ReadContentSafely(response).ConfigureAwait(false);
+                var parsed = JsonConvert.DeserializeObject<TokenResponse>(json);
+                switch (parsed.Error)
+                {
+                    case 1101:
+                        throw new AGConnectException("Get access token failed: invalid request");
+                    case 1102:
+                        throw new AGConnectException("Get access token failed: missing required param");
+                    case 1104:
+                        throw new AGConnectException("Get access token failed: unsupported response type");
+                    case 1105:
+                        throw new AGConnectException("Get access token failed: unsupported grant type");
+                    case 1107:
+                        throw new AGConnectException("Get access token failed: access denied");
+                    case 1201:
+                        throw new AGConnectException("Get access token failed: invalid ticket");
+                    case 1202:
+                        throw new AGConnectException("Get access token failed: invalid sso_st");
+                    default:
+                        break;
+                }
 
-            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var parsed = JsonConvert.DeserializeObject<TokenResponse>(json);
-            switch (parsed.Error)
-            {
-                case 1101:
-                    throw new AGConnectException("Get access token failed: invalid request");
-                case 1102:
-                    throw new AGConnectException("Get access token failed: missing required param");
-                case 1104:
-                    throw new AGConnectException("Get access token failed: unsupported response type");
-                case 1105:
-                    throw new AGConnectException("Get access token failed: unsupported grant type");
-                case 1107:
-                    throw new AGConnectException("Get access token failed: access denied");
-                case 1201:
-                    throw new AGConnectException("Get access token failed: invalid ticket");
-                case 1202:
-                    throw new AGConnectException("Get access token failed: invalid sso_st");
-                default:
-                    break;
-            }
+                if (response.StatusCode != HttpStatusCode.OK)
+                {
+                    var error = $"Response status code for token request does not indicate success: {response.StatusCode}.\r\n" +
+                                $"Response body: {json}";
+                    throw new AGConnectException(error);
+                }
 
-            var token = parsed.GetValidAccessToken();
-            if (string.IsNullOrEmpty(token))
-            {
-                var error = "AccessToken return by AGC is null or empty";
-                throw new AGConnectException(error);
-            }
 
-            tokenResponse = parsed;
-            return token;
+                var token = parsed.GetValidAccessToken();
+                if (string.IsNullOrEmpty(token))
+                {
+                    var error = "AccessToken return by AGC is null or empty";
+                    throw new AGConnectException(error);
+                }
+
+                tokenResponse = parsed;
+                return token;
+            }
         }
     }
 }
